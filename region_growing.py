@@ -1,4 +1,5 @@
 import pydicom
+from pydicom.dataset import Dataset, FileDataset
 import png
 from PIL import Image, ImageTk
 import tkinter as tk
@@ -21,6 +22,7 @@ class DcmRawImage:
 
     def __init__(self, dcm):
         #print(dcm.NumberOfFrames)
+        self.raw = dcm
         self.img = dcm.pixel_array
         self.region_growing = copy.copy(self.img)
         self.curr_img_index = 0
@@ -29,6 +31,9 @@ class DcmRawImage:
 
     def slices(self):
         return self.img.shape[0]
+
+    def raw(self):
+        return self.raw
 
     def size(self):
         return self.img.shape
@@ -242,17 +247,25 @@ def open_file():
 
 def save_file():
     global dcm
-    global rg_seed_x
-    global rg_seed_y
-    global rg_seed_z
-    global rg_delta
 
+    dirpath = read_reg('FileOpenHistory')
+    dirpath = './' if dirpath is None else os.path.dirname(dirpath)
+    filepath = os.path.join(dirpath, 'RegionGrowing.dcm')
+    output = copy.deepcopy(dcm.raw)
+    output.PixelData = np.array([ dcm.get(idx=i, mode=DcmRawImage.Mode.REGION) for i in range(dcm.slices()) ]).tobytes()
+    try:
+        pydicom.filewriter.write_file(filepath, output, write_like_original=False)
+        tk.messagebox.showinfo(title='Success', message='File saved successfully.')
+    except IOError:
+        tk.messagebox.showerror(title='Error', message='File save error!')        
+            
+    '''
     dirpath = read_reg('FileOpenHistory')
     dirpath = './' if dirpath is None else os.path.dirname(dirpath)
     print('InitialDir:', dirpath)
     dirname = filedialog.askdirectory(initialdir=dirpath, title='Select File')
     try:
-        if len(dirname) > 0:
+        if len(dirname) > 0:           
             writer = png.Writer(width=dcm.size()[2], height=dcm.size()[1], bitdepth=16, greyscale=True)
             for i in range(dcm.slices()):
                 slice = dcm.get(idx=i, mode=DcmRawImage.Mode.REGION)
@@ -262,9 +275,10 @@ def save_file():
             with open(os.path.join( dirname, 'param.txt'), 'w') as f:
                 print('Slice:{}, X:{}, Y:{}, Delta:{}'.format(rg_seed_z.get(), rg_seed_x.get(), rg_seed_y.get(), rg_delta.get()), file=f)
                 tk.messagebox.showinfo(title='Success', message='File saved successfully.')
+
     except IOError:
         tk.messagebox.showerror(title='Error', message='File save error!')
-    
+    '''
     
 
 def run_region_growing():
@@ -279,9 +293,9 @@ def run_region_growing():
     seed_z = int(rg_seed_z.get()) - 1
     delta  = int(rg_delta.get())
 
-    if seed_x < 0 or seed_x >= dcm.size()[1]:
+    if seed_x < 0 or seed_x >= dcm.size()[2]:
         tk.messagebox.showerror(title='Error', message='Invalid seed X:' + rg_seed_x.get() )
-    elif seed_y < 0 or seed_y >= dcm.size()[2]:
+    elif seed_y < 0 or seed_y >= dcm.size()[1]:
         tk.messagebox.showerror(title='Error', message='Invalid seed Y:' + rg_seed_y.get() )
     elif seed_z < 0 or seed_z >= dcm.size()[0]:
         tk.messagebox.showerror(title='Error', message='Invalid Slice:' + rg_seed_z.get() )
