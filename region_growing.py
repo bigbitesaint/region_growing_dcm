@@ -10,10 +10,11 @@ import copy
 import math
 import os
 import winreg
+from numpy import newaxis
 from collections import deque
 
 
-scale_factor = 4
+scale_factor = 8
 
 class DcmRawImage:
     class Mode(Enum):
@@ -124,6 +125,9 @@ def slide_show(step):
     global img_panel
     global region_growing_panel
     global dcm
+    global str_seed_x
+    global str_seed_y
+    global str_seed_z    
 
     # update index
     next_idx = ( dcm.curr_index() + step + dcm.slices() ) % dcm.slices()
@@ -140,8 +144,22 @@ def slide_show(step):
     img_slice = dcm.get()
     # normalize view
     img_slice = np.divide( img_slice, np.amax(img_slice) / 256 ).astype(np.uint16)
+
     img_slice = np.kron(img_slice, np.ones( (scale_factor,scale_factor) ))
-    img = Image.fromarray(img_slice)
+    img = Image.fromarray(img_slice).convert('RGB')
+
+    # paint seed
+    try:
+        x = int(str_seed_x.get())
+        y = int(str_seed_y.get())
+        z = int(str_seed_z.get()) - 1
+    except Exception:
+        z = -1
+    if z == next_idx:
+        for i in range(scale_factor):
+            for j in range(scale_factor):
+                img.putpixel( (x*scale_factor + i , y*scale_factor + j), (255, 0, 0))
+
     tkimage = ImageTk.PhotoImage(img)
     img_panel.configure(image=tkimage )
     img_panel.image = tkimage
@@ -229,6 +247,10 @@ def scroll_event(*args):
         
 
 def open_file():
+    global str_seed_x
+    global str_seed_y
+    global str_seed_z
+    global str_delta
     global dcm
 
     dirpath = read_reg('FileOpenHistory')
@@ -240,13 +262,47 @@ def open_file():
             write_reg('FileOpenHistory', filename)
             dcm = DcmRawImage(pydicom.dcmread(filename))
             slide_show(0)
+
+            # load seed data
+            seedfilepath = os.path.join( os.path.dirname(filename), 'seed.txt' )
+            with open(seedfilepath, 'r') as f:
+                try:
+                    for line in f.readlines():
+                        
+                        key, value = line.split('=')
+
+                        if key == 'X':
+                            str_seed_x.set(value)
+                        elif key == 'Y':
+                            str_seed_y.set(value)
+                        elif key == 'Z':
+                            str_seed_z.set(value)
+                        elif key == 'Delta':
+                            str_delta.set(value)
+                except ValueError:
+                    str_seed_x.set('')
+                    str_seed_y.set('')
+                    str_seed_z.set('')
+                    str_delta.set('')
+                    tk.messagebox.showerror(title='Error', message='Seed file error!')   
+                    return
+                dcm.set_index( int(str_seed_z.get()) - 1 )
+                slide_show(0)
+                run_region_growing()
+
     except IOError:
         tk.messagebox.showerror(title='Error', message='File open error!')
+
+
     
     
 
 def save_file():
     global dcm
+    global str_seed_x
+    global str_seed_y
+    global str_seed_z
+    global rg_delta
 
     dirpath = read_reg('FileOpenHistory')
     dirpath = './' if dirpath is None else os.path.dirname(dirpath)
@@ -259,6 +315,14 @@ def save_file():
     except IOError:
         tk.messagebox.showerror(title='Error', message='File save error!')        
             
+
+    # save seed
+    seedfilepath = os.path.join(dirpath, 'seed.txt')
+    with open(seedfilepath, 'w') as f:
+        print('X=' + str_seed_x.get(), file=f)
+        print('Y=' + str_seed_y.get(), file=f)
+        print('Z=' + str_seed_z.get(), file=f)
+        print('Delta=' + rg_delta.get(), file=f)
     '''
     dirpath = read_reg('FileOpenHistory')
     dirpath = './' if dirpath is None else os.path.dirname(dirpath)
@@ -333,10 +397,14 @@ if __name__ == '__main__':
     
     root = tk.Tk()
     root.title('RegionFrowing')
-    root.geometry( '600x600' )
-    tk.Button(root, text='Open file', command=open_file).pack()
+    root.geometry( '600x800' )
 
-    frame_rg = tk.Frame(root, relief=tk.RAISED, borderwidth=1)
+    page = tk.Frame(root)
+    page.pack()
+    tk.Button(page, text='Open file', command=open_file).pack()
+
+
+    frame_rg = tk.Frame(page, relief=tk.RAISED, borderwidth=1)
     tk.Label(frame_rg, text='Slice:').grid(row=0, column=0)
     str_seed_z = tk.StringVar()
     rg_seed_z = tk.Entry(frame_rg, textvariable=str_seed_z)
@@ -353,7 +421,8 @@ if __name__ == '__main__':
     rg_seed_y.grid(row=2, column=1)
 
     tk.Label(frame_rg, text='Delta').grid(row=3, column=0)
-    rg_delta = tk.Entry(frame_rg)
+    str_delta = tk.StringVar()
+    rg_delta = tk.Entry(frame_rg, textvariable=str_delta)
     rg_delta.grid(row=3, column=1)
 
     tk.Button(frame_rg, text='Region Growing', command=run_region_growing ).grid(row=4, column=0, columnspan=2)
@@ -361,24 +430,24 @@ if __name__ == '__main__':
 
 
     # create index count
-    img_index = tk.Label(root)
+    img_index = tk.Label(page)
     img_index.pack()
 
     # create coordinate
-    img_coor = tk.Label(root)
+    img_coor = tk.Label(page)
     img_coor.pack()
 
     # scroll bar
-    scrollbar = tk.Scrollbar(root, orient=tk.HORIZONTAL, command=scroll_event)
+    scrollbar = tk.Scrollbar(page, orient=tk.HORIZONTAL, command=scroll_event)
     scrollbar.pack(fill=tk.X)
     
 
     # create up/down button
-    tk.Button(root, text='<', command=lambda: slide_show(-1)).pack(side=tk.LEFT)
-    tk.Button(root, text='>', command=lambda: slide_show(1)).pack(side=tk.RIGHT)
+    tk.Button(page, text='<', command=lambda: slide_show(-1)).pack(side=tk.LEFT)
+    tk.Button(page, text='>', command=lambda: slide_show(1)).pack(side=tk.RIGHT)
 
     # create information labels
-    frame_top = tk.Frame(root)
+    frame_top = tk.Frame(page)
     frame_top.pack(fill=tk.X)
 
     orig_value_label = tk.Label(frame_top, text='(0)', fg='red')
@@ -389,7 +458,7 @@ if __name__ == '__main__':
 
 
     # create image frame
-    frame_image = tk.Frame(root)
+    frame_image = tk.Frame(page)
     frame_image.pack(fill=tk.X)
 
     # create image
@@ -402,12 +471,12 @@ if __name__ == '__main__':
 
 
     # bottom frame
-    frame_bottom = tk.Frame(root)
+    frame_bottom = tk.Frame(page)
     tk.Button(frame_bottom, text='Save File', command=save_file).pack(fill=tk.X, expand=True)
     frame_bottom.pack(fill=tk.X, expand=True)
 
     # bind event
-    root.bind('<MouseWheel>', mouse_wheel)
+    page.bind('<MouseWheel>', mouse_wheel)
     img_panel.bind('<Motion>', hover_event)
     img_panel.bind('<Button-1>', click_event)
     
