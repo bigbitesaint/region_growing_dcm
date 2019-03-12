@@ -244,7 +244,13 @@ def scroll_event(*args):
             return
         
         slide_show( target_idx - curr_idx )
-        
+
+
+def resize_event(factor):
+    global scale_factor
+
+    scale_factor = factor
+    slide_show(0)
 
 def open_file():
     global str_seed_x
@@ -265,30 +271,34 @@ def open_file():
 
             # load seed data
             seedfilepath = os.path.join( os.path.dirname(filename), 'seed.txt' )
-            with open(seedfilepath, 'r') as f:
-                try:
-                    for line in f.readlines():
-                        
-                        key, value = line.split('=')
+            try:
+                with open(seedfilepath, 'r') as f:
+                    try:
+                        for line in f.readlines():
+                            
+                            key, value = line.split('=')
 
-                        if key == 'X':
-                            str_seed_x.set(value)
-                        elif key == 'Y':
-                            str_seed_y.set(value)
-                        elif key == 'Z':
-                            str_seed_z.set(value)
-                        elif key == 'Delta':
-                            str_delta.set(value)
-                except ValueError:
-                    str_seed_x.set('')
-                    str_seed_y.set('')
-                    str_seed_z.set('')
-                    str_delta.set('')
-                    tk.messagebox.showerror(title='Error', message='Seed file error!')   
-                    return
-                dcm.set_index( int(str_seed_z.get()) - 1 )
-                slide_show(0)
-                run_region_growing()
+                            if key == 'X':
+                                str_seed_x.set(value)
+                            elif key == 'Y':
+                                str_seed_y.set(value)
+                            elif key == 'Z':
+                                str_seed_z.set(value)
+                            elif key == 'Delta':
+                                str_delta.set(value)
+                    except ValueError:
+                        str_seed_x.set('')
+                        str_seed_y.set('')
+                        str_seed_z.set('')
+                        str_delta.set('')
+                        tk.messagebox.showerror(title='Error', message='Seed file error!')   
+                        return
+                    dcm.set_index( int(str_seed_z.get()) - 1 )
+                    slide_show(0)
+                    run_region_growing()
+            except IOError:
+                pass
+
 
     except IOError:
         tk.messagebox.showerror(title='Error', message='File open error!')
@@ -436,6 +446,19 @@ if __name__ == '__main__':
     # create coordinate
     img_coor = tk.Label(page)
     img_coor.pack()
+
+    resize_frame = tk.Frame(page)
+    resize_frame.pack()
+
+    resize1x = tk.Button(resize_frame, text='1x', command=lambda: resize_event(1))
+    resize2x = tk.Button(resize_frame, text='2x', command=lambda: resize_event(2))
+    resize4x = tk.Button(resize_frame, text='4x', command=lambda: resize_event(4))
+    resize8x = tk.Button(resize_frame, text='8x', command=lambda: resize_event(8))
+
+    resize1x.pack(side=tk.LEFT)
+    resize2x.pack(side=tk.LEFT)
+    resize4x.pack(side=tk.LEFT)
+    resize8x.pack(side=tk.LEFT)
 
     # scroll bar
     scrollbar = tk.Scrollbar(page, orient=tk.HORIZONTAL, command=scroll_event)
