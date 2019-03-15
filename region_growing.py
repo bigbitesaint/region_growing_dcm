@@ -10,11 +10,14 @@ import copy
 import math
 import os
 import winreg
+from scipy import ndimage
 from numpy import newaxis
 from collections import deque
 
 
 scale_factor = 8
+mouse_x = None
+mouse_y = None
 
 class DcmRawImage:
     class Mode(Enum):
@@ -29,6 +32,12 @@ class DcmRawImage:
         self.curr_img_index = 0
 
         print(dcm.pixel_array.shape)
+
+    def load_mask(self, dcm):
+        if self.img.shape != dcm.pixel_array.shape:
+            raise Exception("Size not match!")
+
+        self.region_growing = copy.copy(dcm.pixel_array)
 
     def slices(self):
         return self.img.shape[0]
@@ -76,6 +85,34 @@ class DcmRawImage:
         src[idx][y][x] = 0 if src[idx][y][x] > 0 else 65535
         slide_show(0)
 
+    def do_dilation(self, index=-1):
+        for slice in range(self.region_growing.shape[0]):
+            '''
+            for y in range(1, self.region_growing.shape[1]-1, 1):
+                for x in range(1, self.region_growing.shape[2]-1, 1):
+                    if self.region_growing[slice][y][x] == 0:
+                        if  self.region_growing[slice][y][x-1] != 0 and\
+                            self.region_growing[slice][y-1][x] != 0 and\
+                            self.region_growing[slice][y+1][x] != 0 and\
+                            self.region_growing[slice][y][x+1] != 0:
+                            self.region_growing[slice][y][x] = 65535
+                    else:
+                        if  self.region_growing[slice][y][x-1] == 0 and\
+                            self.region_growing[slice][y-1][x] == 0 and\
+                            self.region_growing[slice][y+1][x] == 0 and\
+                            self.region_growing[slice][y][x+1] == 0:
+                            self.region_growing[slice][y][x] = 0                        
+            '''
+            shape = self.region_growing[slice].shape
+            logic = np.array([ 1 if self.region_growing[slice][y][x] > 0 else 0 for y in range(shape[0]) for x in range(shape[1]) ]).reshape(shape)
+            kern = np.array([[1, 1, 1],
+                            [1, 0, 1],
+                            [1, 1, 1]])
+            
+            print(logic.shape)
+            print(kern.shape)
+            conv = ndimage.convolve(logic, kern, mode='constant', cval=0)
+            self.region_growing[slice] = np.array([ 65535 if logic[y][x]==0 and conv[y][x] >7 else (0 if logic[y][x]==1 and conv[y][x] < 1 else self.region_growing[slice][y][x]) for y in range(shape[0]) for x in range(shape[1])]).reshape(shape)
     def do_rg(self, seed, method='INTENSITY', delta=100, range_max=65535):
         size = self.img.shape
         print('Image size:', size)
@@ -155,10 +192,18 @@ def slide_show(step):
         z = int(str_seed_z.get()) - 1
     except Exception:
         z = -1
+
+    # render seed
     if z == next_idx:
         for i in range(scale_factor):
             for j in range(scale_factor):
                 img.putpixel( (x*scale_factor + i , y*scale_factor + j), (255, 0, 0))
+
+    # render mouse position
+    if mouse_x is not None and mouse_y is not None:
+        for i in range(scale_factor):
+            for j in range(scale_factor):
+                img.putpixel( (mouse_x*scale_factor + i , mouse_y*scale_factor + j), (0, 255, 255))        
 
     tkimage = ImageTk.PhotoImage(img)
     img_panel.configure(image=tkimage )
@@ -170,7 +215,15 @@ def slide_show(step):
     # normalize view
     img_slice = np.divide( img_slice, np.amax(img_slice) / 256 ).astype(np.uint16)    
     img_slice = np.kron(img_slice, np.ones( (scale_factor,scale_factor) ))
-    img = Image.fromarray(img_slice)
+    img = Image.fromarray(img_slice).convert('RGB')
+
+    # render mouse position
+    if mouse_x is not None and mouse_y is not None:
+        for i in range(scale_factor):
+            for j in range(scale_factor):
+                img.putpixel( (mouse_x*scale_factor + i , mouse_y*scale_factor + j), (0, 255, 255))
+
+
     tkimage = ImageTk.PhotoImage(img)
     region_growing_panel.configure(image=tkimage )
     region_growing_panel.image = tkimage
@@ -185,14 +238,20 @@ def hover_event(event):
     global orig_value_label
     global rg_value_label
     global dcm
+    global mouse_x
+    global mouse_y
     src = event.widget
 
     x, y = event.x, event.y
     x = int(x / scale_factor)
     y = int(y / scale_factor)
 
+    mouse_x = x
+    mouse_y = y
 
     img_coor['text'] = '(' + str(x) + ',' + str(y) + ')'
+
+    slide_show(0)
     try:
         orig_value_label['text'] = str(dcm.get(mode=DcmRawImage.Mode.PLAIN)[y][x])
         rg_value_label['text']   = str(dcm.get(mode=DcmRawImage.Mode.REGION)[y][x])        
@@ -271,6 +330,9 @@ def open_file():
 
             # load seed data
             seedfilepath = os.path.join( os.path.dirname(filename), 'seed.txt' )
+
+            # load previous mask data
+            maskfilepath = os.path.join( os.path.dirname(filename), 'RegionGrowing.dcm' )
             try:
                 with open(seedfilepath, 'r') as f:
                     try:
@@ -279,13 +341,13 @@ def open_file():
                             key, value = line.split('=')
 
                             if key == 'X':
-                                str_seed_x.set(value)
+                                str_seed_x.set(value.replace('\n', ''))
                             elif key == 'Y':
-                                str_seed_y.set(value)
+                                str_seed_y.set(value.replace('\n', ''))
                             elif key == 'Z':
-                                str_seed_z.set(value)
+                                str_seed_z.set(value.replace('\n', ''))
                             elif key == 'Delta':
-                                str_delta.set(value)
+                                str_delta.set(value.replace('\n', ''))
                     except ValueError:
                         str_seed_x.set('')
                         str_seed_y.set('')
@@ -294,8 +356,12 @@ def open_file():
                         tk.messagebox.showerror(title='Error', message='Seed file error!')   
                         return
                     dcm.set_index( int(str_seed_z.get()) - 1 )
-                    slide_show(0)
-                    run_region_growing()
+
+                    if os.path.exists(maskfilepath):
+                        dcm.load_mask(pydicom.dcmread(maskfilepath))
+                        slide_show(0)
+                    else:
+                        run_region_growing()
             except IOError:
                 pass
 
@@ -353,7 +419,13 @@ def save_file():
     except IOError:
         tk.messagebox.showerror(title='Error', message='File save error!')
     '''
-    
+
+def do_dilation():
+    global dcm
+
+    dcm.do_dilation()
+    slide_show(0)
+
 
 def run_region_growing():
     global rg_seed_x
@@ -447,18 +519,22 @@ if __name__ == '__main__':
     img_coor = tk.Label(page)
     img_coor.pack()
 
-    resize_frame = tk.Frame(page)
-    resize_frame.pack()
+    toolkit_frame = tk.Frame(page)
+    toolkit_frame.pack()
 
-    resize1x = tk.Button(resize_frame, text='1x', command=lambda: resize_event(1))
-    resize2x = tk.Button(resize_frame, text='2x', command=lambda: resize_event(2))
-    resize4x = tk.Button(resize_frame, text='4x', command=lambda: resize_event(4))
-    resize8x = tk.Button(resize_frame, text='8x', command=lambda: resize_event(8))
+    resize1x = tk.Button(toolkit_frame, text='1x', command=lambda: resize_event(1))
+    resize2x = tk.Button(toolkit_frame, text='2x', command=lambda: resize_event(2))
+    resize4x = tk.Button(toolkit_frame, text='4x', command=lambda: resize_event(4))
+    resize8x = tk.Button(toolkit_frame, text='8x', command=lambda: resize_event(8))
 
     resize1x.pack(side=tk.LEFT)
     resize2x.pack(side=tk.LEFT)
     resize4x.pack(side=tk.LEFT)
     resize8x.pack(side=tk.LEFT)
+
+
+    dilation = tk.Button(toolkit_frame, text='dilation', command=do_dilation)
+    dilation.pack(side=tk.RIGHT)
 
     # scroll bar
     scrollbar = tk.Scrollbar(page, orient=tk.HORIZONTAL, command=scroll_event)
@@ -499,7 +575,7 @@ if __name__ == '__main__':
     frame_bottom.pack(fill=tk.X, expand=True)
 
     # bind event
-    page.bind('<MouseWheel>', mouse_wheel)
+    root.bind('<MouseWheel>', mouse_wheel)
     img_panel.bind('<Motion>', hover_event)
     img_panel.bind('<Button-1>', click_event)
     
